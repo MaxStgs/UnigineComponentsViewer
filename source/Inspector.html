@@ -1,0 +1,247 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Inspector</title>
+</head>
+<body>
+<label>
+    Client
+    <select style="width: 300px">
+        <option value="base">Base</option>
+    </select>
+</label>
+<button onclick="update()">Update</button>
+<button onclick="get_test_hierarchy()">Get test hierarchy</button>
+<button onclick="get_test_properties()">Get test properties</button>
+<div class="hierarchy">
+    <p id="object-name"></p>
+    <ul class="properties">
+
+    </ul>
+    <div class="objects-list" id="-1">
+
+    </div>
+</div>
+</body>
+<script>
+    let webSocketConnections = [];
+    let objects;
+    let selectedItem;
+    let currentClientId = "";
+    let currentNodeId = "";
+    let components = [];
+
+    onload = function () {
+        checkClients();
+    }
+
+    function get_test_hierarchy() {
+        objects =
+            [
+                {name: "Node1parent-1", id: "1", parentId: "-1"},
+                {name: "Node2parent1", id: "2", parentId: "1"},
+                {name: "Node3parent2", id: "3", parentId: "2"},
+                {name: "Node4parent1", id: "4", parentId: "1"},
+                {name: "Node5parent-1", id: "5", parentId: "-1"},
+                {name: "Node6parent3", id: "6", parentId: "3"}
+            ]
+        render();
+    }
+
+    function get_test_properties() {
+        components = [];
+        properties = [
+            {name: "Integer", value: 92, type: "Integer"},
+            {name: "Floater", value: 92.2, type: "Float"},
+            {name: "Colorer", value: "#fff000", type: "Color"},
+            {name: "Stringer", value: "Hello", type: "String"},
+        ];
+        components.push(properties);
+        components.push(properties);
+        render_properties();
+        return;
+    }
+
+    function checkClients() {
+        let base_port = 9090;
+        let count = 1;
+        for (let i = 0; i < count; i++) {
+            let socket = new WebSocket("ws://localhost:" + (base_port + i));
+            socket.onopen = function (e) {
+                webSocketConnections.push(socket);
+                let object = create_subscribe(0);
+                send_message(JSON.stringify(object));
+            }
+            socket.onerror = function (e) {
+            }
+            socket.onmessage = handle_message;
+        }
+        console.log(`Clients: ${webSocketConnections.length}`);
+    }
+
+    function handle_message(e) {
+        let json = JSON.parse(e.data);
+        console.log(`Received event: ${json.event}`);
+        switch (json.event) {
+            case "subscribe":
+                handle_subscribe(json);
+                break;
+            case 'subscribe_node':
+                handle_receive_subscribe_node(json);
+                break;
+            case 'update_property':
+                handle_update_property(json);
+                break
+            case 'client_offline':
+                break;
+            case 'client_online':
+                break;
+            default:
+                console.log(`handle_message() unhandled event: ${e.event}`);
+                break;
+        }
+    }
+
+    function handle_subscribe(json) {
+        objects = json.nodes;
+        render();
+    }
+
+    function handle_receive_subscribe_node(json) {
+        components = json.components;
+        render_properties();
+    }
+
+    function handle_update_property(json) {
+        for(let update of json.updates) {
+            document.querySelector(`#${update.name}`).value = update.value;
+        }
+    }
+
+    function render() {
+        let base_place = document.querySelector(".objects-list");
+        base_place.innerHTML = "";
+        let full_objects = objects;
+        for(let i = 0; i < 20; i++) {
+            if (full_objects.length === 0) return;
+            for (let node of objects) {
+                let row = document.createElement("p");
+                row.textContent = node.name;
+                row.id = node.id;
+                row.onclick = function (e) {
+                    select_node(e);
+                }
+                let element = document.getElementById(node.parentId);
+                if (element != null) {
+                    row.style.paddingLeft = (element.paddingLeft ? element.paddingLeft : 2 * 10).toString() + "px";
+                    element.append(row);
+                    full_objects = full_objects.filter(item => item.id !== row.id)
+                }
+            }
+        }
+    }
+    
+    function build_tree() {
+        
+    }
+
+    function render_properties() {
+        let props = document.querySelector(".properties");
+        props.innerHTML = "";
+        for (let component of components) {
+            let div = document.createElement("div");
+            for (let field of component.fields) {
+                let label = document.createElement("label");
+                label.style.display = "block";
+                label.innerText = field.name;
+                let input = document.createElement("input");
+                input.id = field.name;
+                switch (field.type) {
+                    case "Integer":
+                        input.type = "number";
+                        break;
+                    case "Float":
+                        input.type = "number";
+                        input.step = "0.01";
+                        break;
+                    case "String":
+                        input.type = "text";
+                        break;
+                    case "Color":
+                        input.type = "color";
+                        break;
+                    default:
+                        console.log(`render_properties() ${field.type} not handled`);
+                        continue;
+                }
+                input.value = field.value;
+                input.onchange = function (e) {
+                    input_changed(e)
+                };
+                label.appendChild(input);
+                div.appendChild(label);
+            }
+            props.appendChild(div);
+        }
+    }
+
+    function select_node(e) {
+        let id = e.currentTarget.id;
+        currentNodeId = id;
+        let item = find_node_by_id(id);
+        if (item == null) {
+            console.log("select_node() item is empty");
+            return;
+        }
+        console.log("Selected: " + item.name);
+        let object = create_selectNode(id);
+        send_message(object);
+    }
+
+    function find_node_by_id(id) {
+        for (let item of objects) {
+            if (item.id === id)
+                return item;
+        }
+        return null;
+    }
+
+    function input_changed(e) {
+        let input = e.currentTarget;
+        console.log(`${input.id} new value: ${input.value}`);
+
+        let object = create_updateProperty(currentNodeId, input.id, input.value)
+        send_message(object);
+    }
+
+    function create_subscribe(newClientId) {
+        let object = {event: "subscribe"};
+        object.data = {clientId: newClientId};
+        return object;
+    }
+
+    function create_selectNode(newNodeId) {
+        let object = {event: "subscribe_node"};
+        object.data = {nodeId: newNodeId};
+        return object;
+    }
+
+    function create_updateProperty(nodeId, name, value) {
+        let object = {event: "update_property"};
+        object.data = {nodeId: nodeId, name: name, value: value};
+        return object;
+    }
+
+    function send_message(data) {
+        // if (webSocketConnections.length === 0) {
+        //     console.log("send_message() no connection");
+        //     return;
+        // }
+        let conn = webSocketConnections[0];
+        let stringify = JSON.stringify(data, null, '\t');
+        console.log(`send_message() with ${stringify}`);
+        conn.send(stringify);
+    }
+</script>
+</html>
